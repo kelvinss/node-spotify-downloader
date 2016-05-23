@@ -16,10 +16,10 @@ class Track
 		@file = {}
 		@retryCounter = 0
 
-	setSpotify: (@spotify) ->
+	@setSpotify: (@spotify) ->
 
-	process: (@uri, @config, @callback) =>
-		@spotify.get @uri, (err, track) =>
+	process: =>
+		@constructor.spotify.get @uri, (err, track) =>
 #			restriction = track.restriction[0]
 #			if !restriction.countriesForbidden? and restriction.countriesAllowed == ""
 #				Logger.Error "Song is not available anymore."
@@ -28,7 +28,7 @@ class Track
 				return @callback? err
 
 			@track = track
-			@retryCounter = 0
+			#@retryCounter = 0
 			try
 				@createDirs()
 			catch err
@@ -131,8 +131,9 @@ class Track
 			out = fs.createWriteStream @file.path
 			try
 				@track.play().pipe(out).on "finish", =>
-					Logger.Success "Done: #{@track.artist[0].name} - #{@track.name}", 2
 					@writeMetadata()
+					Logger.Success "Done: #{@track.artist[0].name} - #{@track.name}", 2
+					return @callback?()
 			catch err
 				@cleanDirs()
 				Logger.Error "Error while downloading track! #{err}", 2
@@ -149,6 +150,5 @@ class Track
 
 		id3.write meta, @file.path
 		fs.unlink meta.image
-		return @callback?()
 
 module.exports = Track
