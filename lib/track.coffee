@@ -4,13 +4,16 @@ fs = require("fs")
 mkdirp = require("mkdirp")
 id3 = require("node-id3")
 domain = require("domain")
+EventEmitter = require("events").EventEmitter
 request = require("request")
 Path = require("path")
 Logger = require("./log")
 Logger = new Logger()
 clone = require("clone")
 sformat = require("string-format")
-{objTypeof, deepMap, fixPathPiece, getSpotID} = require("./util")
+{removeFile, objTypeof, deepMap, fixPathPiece, getSpotID} = require("./util")
+
+class AlreadyDownloadedError
 
 class Track
 	constructor: (@uri, @config, @data, @callback) ->
@@ -18,7 +21,7 @@ class Track
 		@file = {}
 		@retryCounter = 0
 
-	@setSpotify: (@spotify) ->
+	@setSpotify: (@spotify) =>
 
 	@init: () =>
 		process.on "SIGINT", ()=>
@@ -44,13 +47,38 @@ class Track
 
 			@track = track
 			#@retryCounter = 0
-			try
-				@createDirs()
-			catch err
+
+			handleError = (err) =>
 				Logger.Error "Error on track: \"#{@track.artist[0].name} - #{@track.name}\" : #{err} \n\n#{err.stack}"
 				return @callback?()
+			# @d = domain.create()
+			# @d.on "error", (err) => console.log("ERROR MASTER DOMAIN"); handleError(err)##
+			# @d.run =>
+			try
+				Logger.Log "Downloading: #{@track.artist[0].name} - #{@track.name}", 1
+				@handle()
+			catch err
+				handleError(err)
 
-	createDirs: =>
+	handle: =>
+		#brk = => @cleanDirs(); @callback?()
+
+		#@formatPath()
+		#@handleFs()
+		# @downloadFile =>
+		# 	@downloadCover (err, hasCover) =>
+		# 		@writeMetadata null, hasCover
+		# 		@callback?()
+
+		async.series [@formatPath, @handleFs, @downloadFile, @downloadCover, @writeMetadata], (err, res) =>
+			if err
+				if (err instanceof AlreadyDownloadedError)
+					Logger.Info "Already downloaded: #{@track.artist[0].name} - #{@track.name}", 2
+				else
+					@cleanDirs()
+			@callback?()
+
+	formatPath: (callback) =>
 		@config.directory = Path.resolve @config.directory
 
 		if @config.folder and typeof @config.folder == "string"
@@ -100,91 +128,125 @@ class Track
 			_path = sformat pathFormat, fields
 		catch err
 			Logger.Error "Invalid path format: #{err}", 1
-			return @callback?()
+			#return @callback?()
+			return callback?(err)
 
 		if !_path.endsWith ".mp3"
 			_path += ".mp3"
 
 		@file.path = Path.join @config.directory, _path
 		@file.directory = Path.dirname @file.path
+		return callback?(err)
 
+	handleFs: (callback) =>
 		if fs.existsSync @file.path
 			stats = fs.statSync @file.path
 			if stats.size != 0
-				Logger.Info "Already downloaded: #{@track.artist[0].name} - #{@track.name}", 1
-				return @callback?()
+				return callback? new AlreadyDownloadedError()
+				#return @callback?()
 
 		if !fs.existsSync @file.directory
 			mkdirp.sync @file.directory
+		callback?()
 
-		Logger.Log "Downloading: #{@track.artist[0].name} - #{@track.name}", 1
-
-		@downloadCover()
-		@downloadFile()
+	# cleanDirs: (callback) =>
+	# 	removeFile(@file.path)
+	# 	removeFile("#{@file.path}.jpg")
+	# 	callback?()
 
 	cleanDirs: (callback) =>
-		clean = (fn, cb) =>
-			fs.stat fn, (err, stats) =>
-				if !err
-					fs.unlink fn, cb
-				else
-					cb?()
-		async.map [@file.path, "#{@file.path}.jpg"], clean, (err)->callback?(err)
+		# clean = (fn, cb) =>
+		# 	fs.stat fn, (err, stats) =>
+		# 		if !err
+		# 			fs.unlink fn, cb
+		# 		else
+		# 			cb?()
+		# async.map [@file.path, "#{@file.path}.jpg"], clean, (err)->callback?(err)
+		async.map [@file.path, "#{@file.path}.jpg"], removeFile, callback
 
-	downloadCover: =>
+	downloadCover: (callback) =>
 		coverPath = "#{@file.path}.jpg"
 		images = @track.album.coverGroup?.image
 		image = images?[2] ? images?[0]
 		if !image
 			Logger.Error "Can't download cover: #{@track.artist[0].name} - #{@track.name}", 2
-			return
+			return callback?(null, @hasCover = false)
 		coverUrl = "#{image.uri}"
 		request.get coverUrl
-  	.on "error", (err) =>
-    	Logger.Error "Error while downloading cover: #{err}"
-  	.pipe fs.createWriteStream coverPath
-		Logger.Success "Cover downloaded: #{@track.artist[0].name} - #{@track.name}", 2
+		.on "error", (err) =>
+			Logger.Error "Error while downloading cover: #{err}"
+			callback?(null, @hasCover = false)
+		.pipe fs.createWriteStream coverPath
+		.on "finish", =>
+			#@writeMetadata()
+			Logger.Success "Cover downloaded: #{@track.artist[0].name} - #{@track.name}", 2
+			callback?(null, @hasCover = true)
 
-	downloadFile: =>
-		d = domain.create()
-		d.on "error", (err) =>
-			Logger.Error "Error received: #{err}", 2
-			if "#{err}".indexOf("Rate limited") > -1
-				if @retryCounter < 2
-					@retryCounter++
-					Logger.Info "#{err} ... { Retrying in 10 seconds }", 2
-					setTimeout @downloadFile, 10000
+	downloadFile: (_callback) =>
+		retries = 2
+		retryTime = 10000
+
+		# _callback = =>
+		# 	@callback?()
+		# 	_callback = ->
+
+		callback = =>
+			_callback?.apply(@,arguments)
+			callback = ->
+
+		func = () =>
+			handleError = (err) =>
+				if "#{err}".indexOf("Rate limited") > -1
+					Logger.Error "Error received: #{err}", 2
+					if @retryCounter < retries
+						@retryCounter++
+						Logger.Info "{ Retrying in #{retryTime/1000} seconds }", 2
+						setTimeout(func, retryTime)
+					else
+						Logger.Error "Unable to download song: #{err}. Continuing", 2
+						callback?(err)
 				else
-					@cleanDirs()
-					Logger.Error "Unable to download song. Continuing", 2
-					@callback?()
-			else
-				return @callback?()
-		d.run =>
-			@out = fs.createWriteStream @file.path
-			try
-				@strm = @track.play()
-				@strm.pipe(@out).on "finish", =>
-					@writeMetadata()
-					Logger.Success "Done: #{@track.artist[0].name} - #{@track.name}", 2
-					return @callback?()
-			catch err
-				@cleanDirs()
-				Logger.Error "Error while downloading track! #{err}", 2
-				@callback?()
+					#@cleanDirs()
+					Logger.Error "Error while downloading track: \n#{err.stack}", 2
+					callback?(err)
+
+			d = domain.create()
+			d.on "error", handleError
+			d.run =>
+				try
+					@out = fs.createWriteStream @file.path
+					@strm = @track.play()
+					@strm.on "error", handleError
+					@strm.pipe(@out).on "finish", =>
+						Logger.Success "Downloaded: #{@track.artist[0].name} - #{@track.name}", 2
+						callback?()
+					if !Track.didRetry
+						#@strm.unpipe(@out) ##
+						#@strm.emit("error", new Error("Debug: Rate limited")) ##
+						#@strm.emit("error", new Error("Debug")) ##
+						Track.didRetry = 1
+				catch err
+					return handleError(err)
+
+		func()
 
 	closeStream: (callback) => @strm?.unpipe(@out); callback?()
 
-	writeMetadata: =>
+	writeMetadata: (callback, hasCover) =>
+		#throw	new Error("bizarre error")
+
 		meta =
 			artist: @track.artist[0].name
 			album: @track.album.name
 			title: @track.name
 			year: "#{@track.album.date.year}"
 			trackNumber: "#{@track.number}"
-			image: "#{@file.path}.jpg"
+		if @hasCover
+			meta.image = "#{@file.path}.jpg"
 		id3.write meta, @file.path
-		fs.unlink meta.image
+		if @hasCover
+			removeFile(meta.image)
+		callback?()
 
 	padDigits = (number, digits) =>
     	return Array(Math.max(digits - String(number).length + 1, 0)).join(0) + number;

@@ -1,4 +1,13 @@
 
+fs = require("fs")
+
+removeFile = (filename, callback) ->
+	fs.stat filename, (err, stats) ->
+		if !err
+			fs.unlink filename, callback
+		else
+			callback?()
+
 objTypeof = (obj) -> Object.prototype.toString.call(obj)
 
 chkFn = (fn) -> if typeof fn == "function" then fn else (o)->o
@@ -25,4 +34,4 @@ getSpotID = (uri) ->
 	else if splitd[1] == "user" and splitd[3] == "playlist"
 		return splitd[4]
 
-module.exports = { objTypeof, deepMap, fixPathPiece, getSpotID }
+module.exports = { removeFile, objTypeof, deepMap, fixPathPiece, getSpotID }
