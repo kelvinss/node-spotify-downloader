@@ -18,5 +18,11 @@ fixPathPiece = (piece) ->
 	#piece.replace /[/\\?%*:|"<>]/g, ""
 	piece.split(/[\/\\?%*:|"<>]/g).filter((i)->!!i).join(" ")
 
+getSpotID = (uri) ->
+	splitd = uri?.split(":") ? []
+	if splitd[1] in ["track", "album", "artist"]
+		return splitd[2]
+	else if splitd[1] == "user" and splitd[3] == "playlist"
+		return splitd[4]
 
-module.exports = { objTypeof, deepMap, fixPathPiece }
+module.exports = { objTypeof, deepMap, fixPathPiece, getSpotID }

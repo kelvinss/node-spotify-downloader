@@ -1,3 +1,5 @@
+process = require("process")
+async = require("async")
 fs = require("fs")
 mkdirp = require("mkdirp")
 id3 = require("node-id3")
@@ -8,17 +10,30 @@ Logger = require("./log")
 Logger = new Logger()
 clone = require("clone")
 sformat = require("string-format")
-{objTypeof, deepMap, fixPathPiece} = require("./util")
+{objTypeof, deepMap, fixPathPiece, getSpotID} = require("./util")
 
 class Track
-	constructor: (@uri, @config, @callback) ->
+	constructor: (@uri, @config, @data, @callback) ->
 		@track = {}
 		@file = {}
 		@retryCounter = 0
 
 	@setSpotify: (@spotify) ->
 
+	@init: () =>
+		process.on "SIGINT", ()=>
+			Logger.Log("\nCLOSING [SIGINT]")
+			# @.cur?.cleanDirs (err) =>
+			tasks = [@.cur?.closeStream, @.cur?.cleanDirs].map (f) => f ? (cb)->cb?()
+			async.series tasks, (err) =>
+				if err
+					Logger.Error "Error while closing: #{err}"
+				else
+					Logger.Success "-- CLEANED --"
+				process.exit(0)
+
 	process: =>
+		Track.cur = @
 		@constructor.spotify.get @uri, (err, track) =>
 #			restriction = track.restriction[0]
 #			if !restriction.countriesForbidden? and restriction.countriesAllowed == ""
@@ -58,11 +73,28 @@ class Track
 			obj
 		deepMap.call({fn: fixStrg}, trackCopy)
 
+		# Set IDs for track, album and artists
+		o.id = getSpotID(o.uri) for o in [ trackCopy, trackCopy.album ].concat trackCopy.artist
+
 		fields =
 			track: trackCopy
 			artist: trackCopy.artist[0]
 			album: trackCopy.album
+			playlist: {}
 		fields.album.year = fields.album.date.year
+
+		#if fields.track.number
+		#	fields.track.number = padDigits(fields.track.number, String(@data.trackCount).length)
+		if @data.type in ["album", "playlist", "library"]
+			fields.playlist.name = @data.name
+			fields.playlist.uri = @data.uri
+			fields.playlist.id = @data.id
+		if @data.type in ["playlist", "library"]
+			fields.index = fields.track.index = padDigits(@data.index, String(@data.trackCount).length)
+			fields.playlist.trackCount = @data.trackCount
+			fields.playlist.user = @data.user
+
+		fields.user = @config.username
 
 		try
 			_path = sformat pathFormat, fields
@@ -90,13 +122,14 @@ class Track
 		@downloadCover()
 		@downloadFile()
 
-	cleanDirs: =>
-		fs.stat @file.path, (err, stats) =>
-			if !err
-				fs.unlink @file.path
-		fs.stat "#{@file.path}.jpg", (err, stats) =>
-			if !err
-				fs.unlink "#{@file.path}.jpg"
+	cleanDirs: (callback) =>
+		clean = (fn, cb) =>
+			fs.stat fn, (err, stats) =>
+				if !err
+					fs.unlink fn, cb
+				else
+					cb?()
+		async.map [@file.path, "#{@file.path}.jpg"], clean, (err)->callback?(err)
 
 	downloadCover: =>
 		coverPath = "#{@file.path}.jpg"
@@ -128,9 +161,10 @@ class Track
 			else
 				return @callback?()
 		d.run =>
-			out = fs.createWriteStream @file.path
+			@out = fs.createWriteStream @file.path
 			try
-				@track.play().pipe(out).on "finish", =>
+				@strm = @track.play()
+				@strm.pipe(@out).on "finish", =>
 					@writeMetadata()
 					Logger.Success "Done: #{@track.artist[0].name} - #{@track.name}", 2
 					return @callback?()
@@ -138,6 +172,8 @@ class Track
 				@cleanDirs()
 				Logger.Error "Error while downloading track! #{err}", 2
 				@callback?()
+
+	closeStream: (callback) => @strm?.unpipe(@out); callback?()
 
 	writeMetadata: =>
 		meta =
@@ -147,8 +183,10 @@ class Track
 			year: "#{@track.album.date.year}"
 			trackNumber: "#{@track.number}"
 			image: "#{@file.path}.jpg"
-
 		id3.write meta, @file.path
 		fs.unlink meta.image
+
+	padDigits = (number, digits) =>
+    	return Array(Math.max(digits - String(number).length + 1, 0)).join(0) + number;
 
 module.exports = Track
