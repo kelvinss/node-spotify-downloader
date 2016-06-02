@@ -13,6 +13,7 @@ Download entire Spotify playlists, albums or tracks (directly from Spotify at 16
 
 ### Known problems
 - ID3 tags don't work with Unicode characters
+- Not possible to download 320kbps (limitation of Spotify Web)
 
 ### Prerequisites
 - Install NodeJS **(v4.4.4 LTS)** if you haven't already. ([NodeJS Downloads](https://nodejs.org/en/))
@@ -67,6 +68,8 @@ If you want to specify a path template, the following tokens are available:
 - `{album.name}`
 - `{album.year}`
 - `{user}` (user name used for downloading)
+- `{id}` (ID of what is being downloaded)
+- `{b64uri}` (Spotify URI to be downloaded, base64 encoded)
 
 In case of playlists and library, these tokens are also available:
 
@@ -75,7 +78,8 @@ In case of playlists and library, these tokens are also available:
 - `{playlist.user}` (owner of the playlist)
 - `{index}` (the index of the track in the playlist or library, not in the album it belogs to)
 
-To get the id from a track, album, artist or playlist just `.id` attribute.
+To get the ID of a track, album, artist or playlist, use the respective `.id` attribute (`{track.id}`, `{album.id}`, `{artist.id}`, or `{playlist.id}`).  
+The same thing applies to the `.b64uri` attribute, which return a base64 version of the resource's URI.
 
 e.g. `-f "{artist.name}/{album.name} [{album.year}]/{track.name}"`
 will result in: `Rammstein/Mutter [2001]/Sonne.mp3`
@@ -90,7 +94,7 @@ Passing `-f legacy` will result in the format:
 `{artist.name}/{album.name} [{album.year}]/{artist.name} - {track.name}`
 
 
-### Or Run it from your browser
+### To run it from a Web browser
   To open in browser, just run from terminal/cmd file run.sh/run.bat (depends of your OS)
     this file will install all needed modules an start a local server (address will be displayed in terminal, by default is http://localhost:3001).
     Just open this address in your browser and ... enjoy :)
