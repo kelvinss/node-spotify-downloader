@@ -62,7 +62,8 @@ class Track
 				if (err instanceof AlreadyDownloadedError)
 					Logger.Info "Already downloaded: #{@track.artist[0].name} - #{@track.name}", 2
 				else
-					Logger.Error "Error on track: \"#{@track.artist[0].name} - #{@track.name}\" : #{err} \n\n#{err.stack}"
+					#Logger.Error "Error on track: \"#{@track.artist[0].name} - #{@track.name}\" : #{err} \n\n#{err.stack}"
+					Logger.Error "Error on track: \"#{@track.artist[0].name} - #{@track.name}\" : #{err.stack}", 1
 					return @cleanDirs(@callback)
 			@callback?()
 
@@ -191,7 +192,8 @@ class Track
 					Logger.Error "Unable to download song: #{err}. Continuing", 2
 					callback?(err)
 			else
-				Logger.Error "Error while downloading track: \n#{err.stack}", 2
+				#Logger.Error "Error while downloading track: \n#{err.stack}", 2
+				Logger.Error "Error while downloading track: #{err}", 2
 				callback?(err)
 
 		func = () =>
